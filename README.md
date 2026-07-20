@@ -1,12 +1,13 @@
-# SOPIX T1 Android USB Diagnostic
+# SOPIX T1 Android v3
 
-مشروع أندرويد تجريبي لاكتشاف حساس ACTEON SOPIX T1 عبر USB OTG واستقبال بيانات RAW.
+Diagnostic Android USB Host build for ACTEON SOPIX T1 (VID 1CE6 / PID 0001).
 
-## البناء من GitHub فقط
-1. ارفع جميع محتويات هذا المجلد إلى جذر المستودع.
-2. افتح تبويب **Actions**.
-3. افتح **Build Android APK**.
-4. اضغط **Run workflow**.
-5. بعد اكتمال البناء نزّل Artifact باسم `SopixT1-debug-apk`.
+## v3
+- Cleaner Arabic interface.
+- Automatic connect.
+- One-button initialization and RAW capture.
+- Replays the EP 0x06 command sequence extracted from the successful Windows capture `78.pcapng`.
+- Reads status from EP 0x81 and image data from EP 0x82.
+- Saves RAW files under the app external files directory.
 
-> هذه نسخة تشخيصية. لا تحتوي بعد على تسلسل التهيئة النهائي للحساس أو فك الصورة النهائي.
+GitHub Actions builds a debug APK on every push to `main`.
