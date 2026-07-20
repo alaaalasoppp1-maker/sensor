@@ -1,3 +1,5 @@
+SOPIX T1 Android USB Test v5
+
 SOPIX T1 Android USB Test v0.1
 
 هذه نسخة تشخيصية مدمجة:

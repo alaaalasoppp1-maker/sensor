@@ -80,9 +80,43 @@ public final class SopixUsb {
 
     public boolean isOpen() { return connection != null && epOut06 != null && epIn82 != null; }
 
+    private int sendOnce(byte[] data, int timeoutMs) {
+        if (connection == null || epOut06 == null) return -999;
+        return connection.bulkTransfer(epOut06, data, data.length, timeoutMs);
+    }
+
     private boolean send(byte[] data) {
-        int n = connection.bulkTransfer(epOut06, data, data.length, 1500);
-        return n == data.length;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            int n = sendOnce(data, 1800);
+            if (n == data.length) return true;
+            listener.log("EP06 محاولة " + attempt + " أعادت " + n + " بدل " + data.length);
+            try { Thread.sleep(120L * attempt); } catch (InterruptedException ignored) {}
+        }
+        return false;
+    }
+
+    private boolean reopenForCapture() {
+        UsbDevice d = device != null ? device : find();
+        if (d == null || !manager.hasPermission(d)) return false;
+        if (connection != null && intf != null) try { connection.releaseInterface(intf); } catch (Exception ignored) {}
+        if (connection != null) try { connection.close(); } catch (Exception ignored) {}
+        connection=null; intf=null; epOut06=null; epIn81=null; epIn82=null; epIn88=null;
+        try { Thread.sleep(350); } catch (InterruptedException ignored) {}
+        connection = manager.openDevice(d);
+        if (connection == null) return false;
+        for (int i=0;i<d.getInterfaceCount();i++) {
+            UsbInterface candidate=d.getInterface(i);
+            if (!connection.claimInterface(candidate,true)) continue;
+            UsbEndpoint out=null,in81=null,in82=null,in88=null;
+            for (int e=0;e<candidate.getEndpointCount();e++) {
+                UsbEndpoint ep=candidate.getEndpoint(e);
+                int addr=ep.getAddress() & 0xFF;
+                if(addr==0x06) out=ep; else if(addr==0x81) in81=ep; else if(addr==0x82) in82=ep; else if(addr==0x88) in88=ep;
+            }
+            if(out!=null && in82!=null){ intf=candidate;epOut06=out;epIn81=in81;epIn82=in82;epIn88=in88;device=d;return true; }
+            connection.releaseInterface(candidate);
+        }
+        return false;
     }
 
     public void sendHex(String hex) {
@@ -106,16 +140,30 @@ public final class SopixUsb {
             try (BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(output))) {
                 listener.progress(3,"بدء التهيئة");
 
-                // Start readers before replaying the Windows sequence.
                 long start = System.currentTimeMillis();
                 int stepCount = SopixProtocol.CAPTURE_SEQUENCE.length;
-                for (int i=0; i<stepCount && running.get(); i++) {
-                    SopixProtocol.Step step = SopixProtocol.CAPTURE_SEQUENCE[i];
-                    if (step.delayMs > 0) try { Thread.sleep(step.delayMs); } catch (InterruptedException ignored) {}
-                    if (!send(step.data)) throw new IOException("فشل أمر التهيئة رقم " + (i+1));
-                    if (epIn81 != null) connection.bulkTransfer(epIn81, statusBuffer, statusBuffer.length, 2);
-                    if (i % 20 == 0) listener.progress(5 + (i * 25 / stepCount), "تهيئة الحساس");
+                boolean initialized=false;
+                int failedStep=-1;
+                for(int pass=1; pass<=3 && running.get() && !initialized; pass++){
+                    listener.log("بدء محاولة التهيئة " + pass);
+                    if(!reopenForCapture()) throw new IOException("تعذر إعادة فتح اتصال USB");
+                    try { Thread.sleep(650); } catch (InterruptedException ignored) {}
+                    initialized=true;
+                    for (int i=0; i<stepCount && running.get(); i++) {
+                        SopixProtocol.Step step = SopixProtocol.CAPTURE_SEQUENCE[i];
+                        int wait=Math.max(25, step.delayMs);
+                        try { Thread.sleep(wait); } catch (InterruptedException ignored) {}
+                        int n=sendOnce(step.data,2200);
+                        if(n!=step.data.length){
+                            initialized=false; failedStep=i+1;
+                            listener.log("فشل أمر " + failedStep + " (USB=" + n + ") — إعادة الاتصال");
+                            break;
+                        }
+                        if (i % 10 == 0) listener.progress(5 + (i * 25 / stepCount), "تهيئة الحساس " + (i+1) + "/" + stepCount);
+                    }
+                    if(!initialized) try { Thread.sleep(900); } catch (InterruptedException ignored) {}
                 }
+                if(!initialized) throw new IOException("فشل أمر التهيئة رقم " + failedStep + " بعد إعادة الاتصال التلقائية");
 
                 listener.progress(32,"بانتظار التعرض الشعاعي");
                 int idleMs = 0;
