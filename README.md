@@ -12,5 +12,3 @@ SOPIX T1 Android USB Test v5
 5. بعد اكتمال البناء نزّل Artifact باسم `SopixT1-debug-apk`.
 
 > هذه نسخة تشخيصية. لا تحتوي بعد على تسلسل التهيئة النهائي للحساس أو فك الصورة النهائي.
-
-Version v10: stable USB session, prevents reconnect during capture, fixes null bulkTransfer crash.

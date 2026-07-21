@@ -43,15 +43,15 @@ public class MainActivity extends Activity implements SopixUsb.Listener {
         getWindow().setNavigationBarColor(Color.rgb(7,18,30));
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(18),dp(16),dp(18),dp(12));root.setBackgroundColor(Color.rgb(7,18,30));
 
-        TextView title=text("DENTAL SENSOR",23,Color.WHITE);title.setTypeface(null,1);title.setGravity(Gravity.CENTER);root.addView(title,lp(-1,dp(42)));
-        TextView subtitle=text("SOPIX T1 • DIGITAL X-RAY",11,Color.rgb(145,164,184));subtitle.setGravity(Gravity.CENTER);root.addView(subtitle,lp(-1,dp(26)));
+        TextView title=text("DENTAL CHAIN SENSOR",23,Color.WHITE);title.setTypeface(null,1);title.setGravity(Gravity.CENTER);root.addView(title,lp(-1,dp(42)));
+        TextView subtitle=text("SOPIX T1  •  DIGITAL X-RAY",12,Color.rgb(145,164,184));subtitle.setGravity(Gravity.CENTER);root.addView(subtitle,lp(-1,dp(26)));
 
         LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(18),dp(15),dp(18),dp(15));card.setBackground(bg(Color.rgb(15,31,48),20));
-        statusTitle=text("جاري البحث عن الحساس…",18,Color.WHITE);statusTitle.setGravity(Gravity.RIGHT);statusTitle.setTypeface(null,1);card.addView(statusTitle);
+        statusTitle=text("جاري فحص الحساس…",18,Color.WHITE);statusTitle.setGravity(Gravity.RIGHT);statusTitle.setTypeface(null,1);card.addView(statusTitle);
         statusSub=text("صِل الحساس عبر USB OTG",13,Color.rgb(155,174,194));statusSub.setGravity(Gravity.RIGHT);card.addView(statusSub);
         LinearLayout.LayoutParams cardLp=lp(-1,-2);cardLp.setMargins(0,dp(10),0,dp(14));root.addView(card,cardLp);
 
-        patient=new EditText(this);patient.setHint("اسم المريض");patient.setTextColor(Color.WHITE);patient.setHintTextColor(Color.rgb(130,149,168));patient.setTextSize(17);patient.setSingleLine(true);patient.setGravity(Gravity.RIGHT);patient.setPadding(dp(16),0,dp(16),0);patient.setBackground(bg(Color.rgb(15,31,48),16));root.addView(patient,lp(-1,dp(58)));
+        patient=new EditText(this);patient.setHint("اسم المريض أو رقم الملف");patient.setTextColor(Color.WHITE);patient.setHintTextColor(Color.rgb(130,149,168));patient.setTextSize(17);patient.setSingleLine(true);patient.setGravity(Gravity.RIGHT);patient.setPadding(dp(16),0,dp(16),0);patient.setBackground(bg(Color.rgb(15,31,48),16));root.addView(patient,lp(-1,dp(58)));
 
         mainButton=button("بدء جلسة التصوير",Color.rgb(18,151,121));mainButton.setEnabled(false);mainButton.setOnClickListener(v->capture());LinearLayout.LayoutParams mainLp=lp(-1,dp(62));mainLp.setMargins(0,dp(14),0,dp(10));root.addView(mainButton,mainLp);
 
@@ -63,7 +63,7 @@ public class MainActivity extends Activity implements SopixUsb.Listener {
 
         image=new RawImageView(this);image.setBackground(bg(Color.BLACK,18));root.addView(image,new LinearLayout.LayoutParams(-1,0,1));
 
-        advancedButton=button("التفاصيل التقنية",Color.rgb(30,51,71));advancedButton.setTextSize(13);advancedButton.setOnClickListener(v->{advancedPanel.setVisibility(advancedPanel.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);});LinearLayout.LayoutParams advLp=lp(-1,dp(44));advLp.setMargins(0,dp(10),0,0);root.addView(advancedButton,advLp);
+        advancedButton=button("السجل والأدوات المتقدمة",Color.rgb(30,51,71));advancedButton.setTextSize(13);advancedButton.setOnClickListener(v->{advancedPanel.setVisibility(advancedPanel.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);});LinearLayout.LayoutParams advLp=lp(-1,dp(44));advLp.setMargins(0,dp(10),0,0);root.addView(advancedButton,advLp);
 
         advancedPanel=new LinearLayout(this);advancedPanel.setOrientation(LinearLayout.VERTICAL);advancedPanel.setVisibility(View.GONE);advancedPanel.setPadding(0,dp(8),0,0);
         LinearLayout cmdRow=new LinearLayout(this);command=new EditText(this);command.setHint("HEX إلى EP 0x06");command.setTextColor(Color.WHITE);command.setHintTextColor(Color.GRAY);command.setSingleLine(true);command.setBackground(bg(Color.rgb(15,31,48),12));cmdRow.addView(command,new LinearLayout.LayoutParams(0,dp(48),1));Button send=button("إرسال",Color.rgb(42,75,108));send.setOnClickListener(v->usb.sendHex(command.getText().toString()));LinearLayout.LayoutParams sendLp=lp(dp(92),dp(48));sendLp.setMargins(dp(8),0,0,0);cmdRow.addView(send,sendLp);advancedPanel.addView(cmdRow);
@@ -78,7 +78,7 @@ public class MainActivity extends Activity implements SopixUsb.Listener {
 
     private void preview(){if(lastRaw==null||!lastRaw.exists())return;new Thread(()->{try{image.loadRaw16(lastRaw,1250,1050,1.0f,0f);log("تم إنشاء معاينة أولية");}catch(Exception e){error("Preview: "+e.getMessage());}}).start();}
     public void log(String s){ui.post(()->log.append(new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date())+"  "+s+"\n"));}
-    public void connected(boolean v){ui.post(()->{connected=v;mainButton.setEnabled(v);statusTitle.setText(v?"الحساس متصل":"الحساس غير متصل");statusTitle.setTextColor(v?Color.rgb(80,225,176):Color.WHITE);statusSub.setText(v?"اكتب اسم المريض وابدأ جلسة التصوير":"صِل الحساس عبر USB OTG ثم افحص الاتصال");});}
+    public void connected(boolean v){ui.post(()->{connected=v;mainButton.setEnabled(v);statusTitle.setText(v?"الحساس متصل وجاهز":"الحساس غير متصل");statusTitle.setTextColor(v?Color.rgb(80,225,176):Color.WHITE);statusSub.setText(v?"اكتب اسم المريض ثم ابدأ جلسة التصوير":"صِل الحساس عبر USB OTG ثم اضغط فحص الاتصال");});}
     public void progress(int value,String label){ui.post(()->{progress.setProgress(value);statusSub.setText(label);});}
     public void rawSaved(File f,int bytes){ui.post(()->{lastRaw=f;statusTitle.setText("تم استلام الصورة");statusSub.setText(String.format(Locale.US,"%,d bytes",bytes));log("تم الحفظ: "+f.getAbsolutePath());preview();});}
     public void error(String s){ui.post(()->{statusTitle.setText("تعذر إكمال العملية");statusTitle.setTextColor(Color.rgb(255,125,125));statusSub.setText(s);progress.setProgress(0);log("خطأ: "+s);Toast.makeText(this,s,Toast.LENGTH_LONG).show();});}

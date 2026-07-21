@@ -8,7 +8,7 @@ android {
         applicationId = "com.dentalchain.sopix"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.7-clinic-capture"
+        versionCode = 11
+        versionName = "1.1-clinic-stable"
     }
 }
