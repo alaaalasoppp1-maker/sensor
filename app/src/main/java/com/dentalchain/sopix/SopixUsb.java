@@ -58,25 +58,49 @@ public final class SopixUsb {
 
     private int transfer(UsbEndpoint ep,byte[] b,int timeout){return connection==null?-1:connection.bulkTransfer(ep,b,b.length,timeout);}
 
+    private void drainEp88(){
+        if(connection==null||epIn88==null)return;
+        byte[] stale=new byte[2048];
+        for(int i=0;i<8;i++){
+            int n=connection.bulkTransfer(epIn88,stale,stale.length,20);
+            if(n<=0)break;
+            listener.log("تجاهل رد قديم من EP88: "+hex(stale,Math.min(n,24)));
+        }
+    }
+
     private boolean sendAndAck(SopixProtocol.Step step)throws IOException{
         if(step.delayMs>0)try{Thread.sleep(step.delayMs);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}
+
+        // EP88 may still contain a short reply from the previous Windows-style transaction.
+        // Drain it before sending so a stale 2-byte packet is not misclassified as rejection.
+        drainEp88();
+
         int sent=transfer(epOut06,step.data,1800);
         if(sent!=step.data.length)throw new IOException("فشل إرسال أمر التهيئة "+step.sequence()+" (USB="+sent+")");
 
         byte[] r=new byte[2048];
-        long until=System.currentTimeMillis()+(step.ackRequired?2500:700);
+        long until=System.currentTimeMillis()+(step.ackRequired?3200:900);
         while(running.get()&&System.currentTimeMillis()<until){
-            int n=connection.bulkTransfer(epIn88,r,r.length,180);
-            if(n==2&&(r[0]&255)==step.sequence()){
-                int code=r[1]&255;
-                if(code==0){listener.log("✓ أمر "+step.sequence());return true;}
-                throw new IOException("رفض الحساس أمر التهيئة "+step.sequence()+" (رمز "+code+")");
+            int n=connection.bulkTransfer(epIn88,r,r.length,220);
+            if(n>0){
+                listener.log("EP88 ["+n+"]: "+hex(r,Math.min(n,32)));
+
+                // In the trace, the second byte is not a documented success/error code.
+                // A matching sequence byte confirms that the sensor consumed the command.
+                if((r[0]&255)==step.sequence()){
+                    listener.log("✓ أمر "+step.sequence()+" مؤكد");
+                    return true;
+                }
+
+                // Some responses prepend a status byte; accept the sequence in byte 2 as well.
+                if(n>=2&&(r[1]&255)==step.sequence()){
+                    listener.log("✓ أمر "+step.sequence()+" مؤكد");
+                    return true;
+                }
             }
-            // Commands 4/5/6/7/9 can return a data block before their 2-byte acknowledgement.
-            if(n>0)listener.log("بيانات الحساس: "+n+" bytes");
         }
         if(!step.ackRequired){
-            listener.log("✓ تم إرسال أمر 10 — متابعة انتظار الصورة");
+            listener.log("✓ تم إرسال أمر "+step.sequence()+" — متابعة انتظار الصورة");
             return true;
         }
         throw new IOException("لم يصل تأكيد أمر التهيئة "+step.sequence());
