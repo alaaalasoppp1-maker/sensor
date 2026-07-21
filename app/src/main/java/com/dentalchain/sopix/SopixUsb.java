@@ -26,6 +26,7 @@ public final class SopixUsb {
     public boolean isOpen(){return connection!=null&&epOut06!=null&&epIn82!=null&&epIn88!=null;}
 
     public void requestOrOpen(){
+        if(running.get()){ listener.log("جلسة التصوير جارية — لن تتم إعادة فتح USB"); return; }
         UsbDevice d=find(); if(d==null){listener.error("لم يتم العثور على الحساس");return;}
         device=d;
         if(!manager.hasPermission(d)){
@@ -35,6 +36,7 @@ public final class SopixUsb {
     }
 
     public synchronized void open(UsbDevice d){
+        if(running.get()){ listener.log("تجاهل إعادة فتح USB أثناء جلسة التصوير"); return; }
         closeConnectionOnly(); device=d; connection=manager.openDevice(d);
         if(connection==null){listener.error("تعذر فتح اتصال USB");return;}
         for(int i=0;i<d.getInterfaceCount();i++){
@@ -56,32 +58,48 @@ public final class SopixUsb {
         closeConnectionOnly(); try{Thread.sleep(250);}catch(InterruptedException ignored){} open(d); return isOpen();
     }
 
-    private int transfer(UsbEndpoint ep,byte[] b,int timeout){return connection==null?-1:connection.bulkTransfer(ep,b,b.length,timeout);}
+    private static int transfer(UsbDeviceConnection c,UsbEndpoint ep,byte[] b,int timeout){
+        if(c==null||ep==null)return -1;
+        try{return c.bulkTransfer(ep,b,b.length,timeout);}catch(Exception ignored){return -1;}
+    }
 
-    private void drainEp88(){
-        if(connection==null||epIn88==null)return;
+    private static final class Session {
+        final UsbDeviceConnection connection;
+        final UsbEndpoint out06,in81,in82,in88;
+        Session(UsbDeviceConnection c,UsbEndpoint o,UsbEndpoint i81,UsbEndpoint i82,UsbEndpoint i88){
+            connection=c;out06=o;in81=i81;in82=i82;in88=i88;
+        }
+    }
+
+    private synchronized Session snapshotSession(){
+        if(connection==null||epOut06==null||epIn82==null||epIn88==null)return null;
+        return new Session(connection,epOut06,epIn81,epIn82,epIn88);
+    }
+
+    private void drainEp88(Session session){
+        if(session==null)return;
         byte[] stale=new byte[2048];
         for(int i=0;i<8;i++){
-            int n=connection.bulkTransfer(epIn88,stale,stale.length,20);
+            int n=transfer(session.connection,session.in88,stale,20);
             if(n<=0)break;
             listener.log("تجاهل رد قديم من EP88: "+hex(stale,Math.min(n,24)));
         }
     }
 
-    private boolean sendAndAck(SopixProtocol.Step step)throws IOException{
+    private boolean sendAndAck(Session session,SopixProtocol.Step step)throws IOException{
         if(step.delayMs>0)try{Thread.sleep(step.delayMs);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}
 
         // EP88 may still contain a short reply from the previous Windows-style transaction.
         // Drain it before sending so a stale 2-byte packet is not misclassified as rejection.
-        drainEp88();
+        drainEp88(session);
 
-        int sent=transfer(epOut06,step.data,1800);
+        int sent=transfer(session.connection,session.out06,step.data,1800);
         if(sent!=step.data.length)throw new IOException("فشل إرسال أمر التهيئة "+step.sequence()+" (USB="+sent+")");
 
         byte[] r=new byte[2048];
         long until=System.currentTimeMillis()+(step.ackRequired?3200:900);
         while(running.get()&&System.currentTimeMillis()<until){
-            int n=connection.bulkTransfer(epIn88,r,r.length,220);
+            int n=transfer(session.connection,session.in88,r,220);
             if(n>0){
                 listener.log("EP88 ["+n+"]: "+hex(r,Math.min(n,32)));
 
@@ -117,22 +135,28 @@ public final class SopixUsb {
         try{
             listener.progress(2,"تجهيز اتصال الحساس");
             if(!reopen())throw new IOException("تعذر إعادة فتح الحساس");
+            final Session session=snapshotSession();
+            if(session==null)throw new IOException("فُقد اتصال USB قبل بدء الجلسة");
 
             // Do not poll EP81 while command acknowledgements are being read from EP88.
             // Concurrent bulkTransfer calls on several Android USB stacks caused command 10 to be lost.
             listener.progress(8,"تهيئة الحساس");
             for(int i=0;i<SopixProtocol.ACQUIRE.length&&running.get();i++){
-                sendAndAck(SopixProtocol.ACQUIRE[i]);
+                sendAndAck(session,SopixProtocol.ACQUIRE[i]);
                 listener.progress(8+(i+1)*27/SopixProtocol.ACQUIRE.length,"تهيئة الحساس "+(i+1)+"/"+SopixProtocol.ACQUIRE.length);
             }
 
             listener.progress(38,"الحساس جاهز — قم بالتعريض الآن");
             listener.log("جاهز لاستقبال 1250×1050 من EP82");
-            byte[] imageBuffer=new byte[Math.max(65536,epIn82.getMaxPacketSize()*256)];
-            long deadline=System.currentTimeMillis()+90000; int idle=0; boolean started=false;
+            byte[] imageBuffer=new byte[Math.max(65536,session.in82.getMaxPacketSize()*256)];
+            long deadline=System.currentTimeMillis()+180000; int idle=0; boolean started=false;
             try(BufferedOutputStream out=new BufferedOutputStream(new FileOutputStream(output))){
                 while(running.get()&&total<expectedBytes&&System.currentTimeMillis()<deadline){
-                    int n=connection.bulkTransfer(epIn82,imageBuffer,imageBuffer.length,350);
+                    int n=transfer(session.connection,session.in82,imageBuffer,350);
+                    if(n<0){
+                        if(snapshotSession()==null)throw new IOException("انقطع اتصال USB أثناء انتظار الصورة");
+                        n=0;
+                    }
                     if(n>0){
                         if(!started){started=true;listener.log("بدأ وصول الصورة");}
                         idle=0; out.write(imageBuffer,0,n); total+=n;
@@ -154,7 +178,7 @@ public final class SopixUsb {
         if(!isOpen()){listener.error("الحساس غير متصل");return;}String c=h.replaceAll("[^0-9A-Fa-f]","");
         if(c.length()==0||(c.length()&1)!=0){listener.error("قيمة HEX غير صالحة");return;}
         byte[] b=new byte[c.length()/2];for(int i=0;i<b.length;i++)b[i]=(byte)Integer.parseInt(c.substring(i*2,i*2+2),16);
-        int n=transfer(epOut06,b,1500);listener.log("HEX OUT: "+n+" bytes");
+        Session s=snapshotSession(); int n=s==null?-1:transfer(s.connection,s.out06,b,1500);listener.log("HEX OUT: "+n+" bytes");
     }
     private static String hex(byte[] b,int n){StringBuilder s=new StringBuilder();for(int i=0;i<n;i++)s.append(String.format(Locale.US,"%02X",b[i]&255)).append(i+1<n?' ':' ');return s.toString().trim();}
     public void stopCapture(){running.set(false);listener.progress(0,"تم إيقاف الجلسة");}
