@@ -59,14 +59,25 @@ public final class SopixUsb {
     private int transfer(UsbEndpoint ep,byte[] b,int timeout){return connection==null?-1:connection.bulkTransfer(ep,b,b.length,timeout);}
 
     private boolean sendAndAck(SopixProtocol.Step step)throws IOException{
-        if(step.delayMs>0)try{Thread.sleep(step.delayMs);}catch(InterruptedException ignored){}
+        if(step.delayMs>0)try{Thread.sleep(step.delayMs);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}
         int sent=transfer(epOut06,step.data,1800);
         if(sent!=step.data.length)throw new IOException("فشل إرسال أمر التهيئة "+step.sequence()+" (USB="+sent+")");
-        byte[] r=new byte[512]; long until=System.currentTimeMillis()+2200;
+
+        byte[] r=new byte[2048];
+        long until=System.currentTimeMillis()+(step.ackRequired?2500:700);
         while(running.get()&&System.currentTimeMillis()<until){
-            int n=connection.bulkTransfer(epIn88,r,r.length,250);
-            if(n==2&&(r[0]&255)==step.sequence()&&r[1]==0){listener.log("✓ أمر "+step.sequence());return true;}
-            if(n>0)listener.log("EP88: "+hex(r,n));
+            int n=connection.bulkTransfer(epIn88,r,r.length,180);
+            if(n==2&&(r[0]&255)==step.sequence()){
+                int code=r[1]&255;
+                if(code==0){listener.log("✓ أمر "+step.sequence());return true;}
+                throw new IOException("رفض الحساس أمر التهيئة "+step.sequence()+" (رمز "+code+")");
+            }
+            // Commands 4/5/6/7/9 can return a data block before their 2-byte acknowledgement.
+            if(n>0)listener.log("بيانات الحساس: "+n+" bytes");
+        }
+        if(!step.ackRequired){
+            listener.log("✓ تم إرسال أمر 10 — متابعة انتظار الصورة");
+            return true;
         }
         throw new IOException("لم يصل تأكيد أمر التهيئة "+step.sequence());
     }
@@ -78,19 +89,13 @@ public final class SopixUsb {
     }
 
     private void runCapture(File output,int expectedBytes){
-        int total=0; AtomicBoolean statusRun=new AtomicBoolean(true);
+        int total=0;
         try{
-            listener.progress(2,"إعادة تجهيز اتصال الحساس");
+            listener.progress(2,"تجهيز اتصال الحساس");
             if(!reopen())throw new IOException("تعذر إعادة فتح الحساس");
 
-            Thread statusThread=new Thread(()->{
-                if(epIn81==null)return; byte[] s=new byte[64]; String last="";
-                while(running.get()&&statusRun.get()){
-                    int n=connection.bulkTransfer(epIn81,s,s.length,300);
-                    if(n>0){String now=hex(s,Math.min(n,8)); if(!now.equals(last)){last=now;listener.log("حالة: "+now);}}
-                }
-            },"sopix-status"); statusThread.start();
-
+            // Do not poll EP81 while command acknowledgements are being read from EP88.
+            // Concurrent bulkTransfer calls on several Android USB stacks caused command 10 to be lost.
             listener.progress(8,"تهيئة الحساس");
             for(int i=0;i<SopixProtocol.ACQUIRE.length&&running.get();i++){
                 sendAndAck(SopixProtocol.ACQUIRE[i]);
@@ -98,25 +103,27 @@ public final class SopixUsb {
             }
 
             listener.progress(38,"الحساس جاهز — قم بالتعريض الآن");
+            listener.log("جاهز لاستقبال 1250×1050 من EP82");
             byte[] imageBuffer=new byte[Math.max(65536,epIn82.getMaxPacketSize()*256)];
             long deadline=System.currentTimeMillis()+90000; int idle=0; boolean started=false;
             try(BufferedOutputStream out=new BufferedOutputStream(new FileOutputStream(output))){
                 while(running.get()&&total<expectedBytes&&System.currentTimeMillis()<deadline){
-                    int n=connection.bulkTransfer(epIn82,imageBuffer,imageBuffer.length,300);
+                    int n=connection.bulkTransfer(epIn82,imageBuffer,imageBuffer.length,350);
                     if(n>0){
-                        if(!started){started=true;listener.log("بدأ وصول الصورة من EP82");}
+                        if(!started){started=true;listener.log("بدأ وصول الصورة");}
                         idle=0; out.write(imageBuffer,0,n); total+=n;
                         listener.progress(40+Math.min(58,(int)(total*58L/expectedBytes)),"استقبال الصورة");
-                    }else if(started){idle+=300;if(idle>=1800)break;}
+                    }else if(started){idle+=350;if(idle>=2100)break;}
                 }
                 out.flush();
             }
-            statusRun.set(false);
-            if(!started||total==0)throw new IOException("لم تصل الصورة بعد التعريض خلال 90 ثانية");
+            if(!started||total==0)throw new IOException("لم تصل بيانات الصورة بعد التعريض");
             if(total<expectedBytes)listener.log("تنبيه: حجم الصورة "+total+" بدل "+expectedBytes);
             listener.progress(100,"اكتملت الصورة"); listener.rawSaved(output,total);
-        }catch(Exception e){if(output.exists()&&output.length()==0)output.delete();listener.error(e.getMessage()==null?"فشل الالتقاط":e.getMessage());}
-        finally{statusRun.set(false);running.set(false);}
+        }catch(Exception e){
+            if(output.exists()&&output.length()==0)output.delete();
+            listener.error(e.getMessage()==null?"فشل الالتقاط":e.getMessage());
+        }finally{running.set(false);}
     }
 
     public void sendHex(String h){
